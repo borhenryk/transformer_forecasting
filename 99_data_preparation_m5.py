@@ -222,6 +222,15 @@ final_df = ps.read_table('natyra_ts.natyra_ts_fm.m5_final_merged')
 
 # COMMAND ----------
 
+display(final_df.head(100))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## PYTORCH
+
+# COMMAND ----------
+
 # MAGIC %pip install jax[cuda12]==0.4.26 --quiet
 # MAGIC %pip install protobuf==3.20.* --quiet
 # MAGIC %pip install utilsforecast --quiet
@@ -230,12 +239,68 @@ final_df = ps.read_table('natyra_ts.natyra_ts_fm.m5_final_merged')
 
 # COMMAND ----------
 
-%pip install timesfm[pax]
+%pip install timesfm[torch]
 
 # COMMAND ----------
 
+#from huggingface_hub import snapshot_download
+#snapshot_download(repo_id="google/timesfm-1.0-200m", cache_dir="/dbfs/tmp/huggingface")
+
+
+# COMMAND ----------
+
+#display(dbutils.fs.ls("dbfs:/tmp/huggingface/models--google--timesfm-1.0-200m/snapshots/"))
+
+# COMMAND ----------
 
 import timesfm
+
+# For Pytorch
+tfm = timesfm.TimesFm(
+      hparams=timesfm.TimesFmHparams(
+          backend="gpu",
+          per_core_batch_size=32,
+          horizon_len=128,
+      ),
+      checkpoint=timesfm.TimesFmCheckpoint(
+          huggingface_repo_id="google/timesfm-1.0-200m-pytorch",
+      ),
+  )
+
+display(tfm)
+
+# COMMAND ----------
+
+final_df.head(2)
+
+# COMMAND ----------
+
+cov_forecast, ols_forecast = timesfm.forecast_with_covariates(  
+      inputs=final_df,
+      dynamic_numerical_covariates={
+          "date": final_df["date"],
+      },
+      static_categorical_covariates={
+          "state_id": final_df["state_id"],
+      },
+      freq=[0] * len(inputs['date'].iloc[0]),
+      xreg_mode="xreg + timesfm",              # default
+      ridge=0.0,
+      force_on_cpu=False,
+      normalize_xreg_target_per_input=True,    # default
+  )
+  
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ##PAX
+
+# COMMAND ----------
+
+pip install timesfm[pax]
+
+# COMMAND ----------
 
 # For PAX
 tfm = timesfm.TimesFm(
@@ -248,26 +313,42 @@ tfm = timesfm.TimesFm(
           huggingface_repo_id="google/timesfm-1.0-200m"),
   )
 
-display(tfm)
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## THEIR NOTEBOOK EXAMPLE
 
 # COMMAND ----------
 
-inputs = ds.rename(columns = {'start_station_name':'unique_id', 'starttime':'ds'}),
-    freq = "D",
-    value_name = 'num_trips'
+# MAGIC %pip install jax[cuda12]==0.4.26 --quiet
+# MAGIC %pip install protobuf==3.20.* --quiet
+# MAGIC %pip install utilsforecast --quiet
+# MAGIC %pip install numba --quiet
+# MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
 
-# Generate forecasts on the input DataFrame.
-forecast_df = tfm.forecast_on_df(
-    inputs=final_df,  # The input DataFrame containing the time series data.
-    freq="D",  # Frequency of the time series data, set to daily.
-    value_name="y",  # Column name in the DataFrame containing the values to forecast.
-    num_jobs=-1,  # Number of parallel jobs to run, set to -1 to use all available processors.
+# MAGIC %pip install jax
+# MAGIC %pip install timesfm
+# MAGIC import timesfm
+
+# COMMAND ----------
+
+timesfm_backend = "gpu"  # @param
+
+from jax._src import config
+config.update(
+    "jax_platforms", {"cpu": "cpu", "gpu": "cuda", "tpu": ""}[timesfm_backend]
 )
 
-# Display the forecast DataFrame.
-display(forecast_df)
+model = timesfm.TimesFm(
+    input_len=32,
+    output_len=128,
+    layers=20,
+    dims=1280,
+    backend=timesfm_backend,
+)
+model.load_from_checkpoint(repo_id="google/timesfm-1.0-200m")
 
 # COMMAND ----------
 
